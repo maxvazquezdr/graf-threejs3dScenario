@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>three.js webgl - Práctica Escenario y Personajes con Textura de Tela</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+        <link type="text/css" rel="stylesheet" href="main.css">
+        <style>
+            body { margin: 0; background-color: #000; color: #fff; font-family: monospace; }
+            #info { position: absolute; top: 10px; width: 100%; text-align: center; z-index: 100; pointer-events: none; }
+            #info a { color: #ff0055; }
+            #instructions { position: absolute; bottom: 20px; width: 100%; text-align: center; z-index: 100; color: #00ffcc; font-size: 14px; text-shadow: 1px 1px 2px #000; pointer-events: none; }
+        </style>
+    </head>
+
+    <body>
+        <div id="info">
+            <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> - Práctica TecNM Pachuca (Escenario Quarry, Audio y Textura de Tela)
+        </div>
+        <div id="instructions">Haz clic en cualquier parte de la pantalla para activar la música 🎵</div>
+
+        <script type="importmap">
+            {
+                "imports": {
+                    "three": "../build/three.module.js",
+                    "three/addons/": "./jsm/"
+                }
+            }
+        </script>
+
+        <script type="module">
+
+            import * as THREE from 'three';
+            import Stats from 'three/addons/libs/stats.module.js';
+            import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+            import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+            import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+
+            let camera, scene, renderer, controls, stats;
+            let mixer1, mixer2;
+
+            const clock = new THREE.Clock();
+
+            init();
+
+            function init() {
+
+                const container = document.createElement( 'div' );
+                document.body.appendChild( container );
+
+                // 1. Cámara y Escena
+                camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 2000 );
+                camera.position.set( 100, 200, 400 );
+
+                scene = new THREE.Scene();
+                scene.background = new THREE.Color( 0x0b0b1a );
+
+                // 2. Cargar Entorno HDR (Quarry 01)
+                new RGBELoader()
+                    .setPath( 'models/' )
+                    .load( 'quarry_01_2k.hdr', function ( texture ) {
+
+                        texture.mapping = THREE.EquirectangularReflectionMapping;
+
+                        scene.background = texture;
+                        scene.environment = texture;
+
+                    }, undefined, function ( error ) {
+                        console.error( 'Error cargando quarry_01_2k.hdr:', error );
+                    } );
+
+                // 3. Iluminación
+                const hemiLight = new THREE.HemisphereLight( 0xffffff, 0x444444, 2.5 );
+                hemiLight.position.set( 0, 200, 0 );
+                scene.add( hemiLight );
+
+                const dirLight = new THREE.DirectionalLight( 0xffffff, 2 );
+                dirLight.position.set( 100, 200, 100 );
+                dirLight.castShadow = true;
+                scene.add( dirLight );
+
+                // Suelo base con cuadrícula
+                const mesh = new THREE.Mesh(
+                    new THREE.PlaneGeometry( 2000, 2000 ),
+                    new THREE.MeshStandardMaterial( {
+                        color: 0x998877,
+                        roughness: 0.9,
+                        metalness: 0.1,
+                        transparent: true,
+                        opacity: 0.45
+                    } )
+                );
+                mesh.rotation.x = - Math.PI / 2;
+                mesh.receiveShadow = true;
+                scene.add( mesh );
+
+                const grid = new THREE.GridHelper( 2000, 20, 0x000000, 0x000000 );
+                grid.material.opacity = 0.15;
+                grid.material.transparent = true;
+                scene.add( grid );
+
+                // 4. Sistema de Audio con Activación por Clic
+                const listener = new THREE.AudioListener();
+                camera.add( listener );
+
+                const sound = new THREE.Audio( listener );
+                const audioLoader = new THREE.AudioLoader();
+                audioLoader.load( 'sounds/starostin-sneaky-quirky-music-635314.mp3', function ( buffer ) {
+                    sound.setBuffer( buffer );
+                    sound.setLoop( true );
+                    sound.setVolume( 0.5 );
+                }, undefined, function ( err ) {
+                    console.warn( 'Audio no encontrado:', err );
+                });
+
+                window.addEventListener( 'pointerdown', function () {
+                    if ( sound && !sound.isPlaying ) {
+                        sound.play();
+                        const instr = document.getElementById('instructions');
+                        if ( instr ) instr.style.display = 'none';
+                    }
+                }, { once: true } );
+
+                // 5. Cargar Textura de Tela (Ruta corregida a examples/textures/)
+                const textureLoader = new THREE.TextureLoader();
+                const clothTexture = textureLoader.load( 'textures/tela.jpg', 
+                    function ( tex ) {
+                        console.log('✅ ¡Textura tela.jpg cargada correctamente!');
+                    }, 
+                    undefined, 
+                    function ( err ) {
+                        console.error('❌ ERROR: No se pudo encontrar tela.jpg en textures/. Revisa la ruta.', err);
+                    }
+                );
+                clothTexture.colorSpace = THREE.SRGBColorSpace;
+                clothTexture.wrapS = THREE.RepeatWrapping;
+                clothTexture.wrapT = THREE.RepeatWrapping;
+                clothTexture.repeat.set( 3, 3 );
+
+                // 6. Cargar Personajes FBX
+                const fbxLoader = new FBXLoader();
+
+                // --- SUJETO 1 (Praying con Textura Forzada) ---
+                fbxLoader.load( 'models/fbx/Praying.fbx', function ( object ) {
+
+                    mixer1 = new THREE.AnimationMixer( object );
+                    if ( object.animations.length > 0 ) {
+                        const action = mixer1.clipAction( object.animations[ 0 ] );
+                        action.play();
+                    }
+
+                    object.scale.setScalar( 1 );
+                    object.position.set( -60, 0, 0 );
+
+                    object.traverse( function ( child ) {
+                        if ( child.isMesh ) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+
+                            child.material = new THREE.MeshStandardMaterial( {
+                                map: clothTexture,
+                                color: 0xffffff,
+                                roughness: 0.4,
+                                metalness: 0.1
+                            } );
+                        }
+                    } );
+
+                    scene.add( object );
+                }, undefined, function(error) {
+                    console.error("Error cargando Praying.fbx:", error);
+                } );
+
+                // --- SUJETO 2 (Samba Dancing) ---
+                fbxLoader.load( 'models/fbx/Samba Dancing.fbx', function ( object ) {
+
+                    mixer2 = new THREE.AnimationMixer( object );
+                    if ( object.animations.length > 0 ) {
+                        const action = mixer2.clipAction( object.animations[ 0 ] );
+                        action.play();
+                    }
+
+                    object.scale.setScalar( 1 );
+                    object.position.set( 60, 0, 0 );
+
+                    object.traverse( function ( child ) {
+                        if ( child.isMesh ) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    } );
+
+                    scene.add( object );
+                }, undefined, function(error) {
+                    console.error("Error cargando Samba Dancing.fbx:", error);
+                } );
+
+                // 7. Renderizador y Controles
+                renderer = new THREE.WebGLRenderer( { antialias: true } );
+                renderer.setPixelRatio( window.devicePixelRatio );
+                renderer.setSize( window.innerWidth, window.innerHeight );
+                renderer.setAnimationLoop( animate );
+                renderer.shadowMap.enabled = true;
+                renderer.toneMapping = THREE.ACESFilmicToneMapping;
+                renderer.toneMappingExposure = 1.0;
+                container.appendChild( renderer.domElement );
+
+                controls = new OrbitControls( camera, renderer.domElement );
+                controls.enableDamping = true;
+                controls.target.set( 0, 100, 0 );
+                controls.update();
+
+                window.addEventListener( 'resize', onWindowResize );
+
+                stats = new Stats();
+                container.appendChild( stats.dom );
+
+            }
+
+            function onWindowResize() {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize( window.innerWidth, window.innerHeight );
+            }
+
+            function animate() {
+                const delta = clock.getDelta();
+
+                if ( mixer1 ) mixer1.update( delta );
+                if ( mixer2 ) mixer2.update( delta );
+
+                controls.update();
+                renderer.render( scene, camera );
+                stats.update();
+            }
+
+        </script>
+    </body>
+</html>
